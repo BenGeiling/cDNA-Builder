@@ -1,0 +1,556 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+
+<!-- HEADER -->
+<head>
+	<!-- Set-up important tags + scripts -->
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<title>DNA Color</title>
+	<meta name="robots" content="index" />
+	<meta name="author" content="Ben Geiling" />
+	<link rel="stylesheet" type="text/css" href="main.css" media="screen" />
+
+	<!-- Include JQuery -->
+	<script type="text/javascript" src="scripts/jquery-2.1.4.min.js"></script>
+
+	<!-- Include detectChange.js script -->
+	<script type="text/javascript" src="scripts/detectChange.js"></script>
+
+	<!-- Include mouse position script -->
+	<script type="text/javascript" src="scripts/cursorPosition.js"></script>
+
+	<!-- Include aminoAcids.js script -->
+	<script type="text/javascript" src="scripts/aminoAcids.js"></script>
+
+	<!-- Include draw.js script -->
+	<script type="text/javascript" src="scripts/draw.js"></script>
+
+	<!-- Include RE-Finder.js script and Enzymes data file -->
+	<script type="text/javascript" src="data files/ENZYMES.js"></script>
+	<script type="text/javascript" src="scripts/DNATools.js"></script>
+</head>
+
+<!-- BODY -->
+<body>
+
+<!-- BS hack to preload custom font
+<div style="font-family: Gloria">.</div>-->
+
+<!-- Create Page Wrapper -->
+<div id="wrapper">
+
+	<!-- Display text/sequence input box -->
+	<div id="inputBox">
+		<textarea type="text" id="searchSequence" style="width:100%; height:50px;"></textarea>
+	</div>
+
+	<!-- Create and Center HTML5 Canvas ->
+	<div id="background"></div>-->
+	<canvas id="background">NO HTML5 SUPPORT</canvas>
+	<canvas id="foreground">NO HTML5 SUPPORT</canvas>
+	<canvas id="overlay">NO HTML5 SUPPORT</canvas>
+</div>
+
+<!-- Javascript Starts Here -->
+<script>
+
+//Setup the stages
+var STAGE_BACKGROUND = document.getElementById("background");
+var stageBackground = STAGE_BACKGROUND.getContext("2d");
+var STAGE_FOREGROUND = document.getElementById("foreground");
+var stageForeground = STAGE_FOREGROUND.getContext("2d");
+var STAGE_OVERLAY = document.getElementById("overlay");
+var stageOverlay = STAGE_OVERLAY.getContext("2d");
+
+//Get window width and height
+var backgroundWidth = window.innerWidth*0.98;
+var backgroundHeight = window.innerHeight*0.8;
+STAGE_BACKGROUND.height = backgroundHeight;
+STAGE_BACKGROUND.width = backgroundWidth;
+STAGE_FOREGROUND.height = backgroundHeight;
+STAGE_FOREGROUND.width = backgroundWidth;
+STAGE_OVERLAY.height = backgroundHeight;
+STAGE_OVERLAY.width = backgroundWidth;
+
+//Setup keyObject object/array
+var DISPLAY_SIZE = 20;
+var WINDOW_LOCATION = 0;
+var keyObject;
+var displayObjects = new Array();
+var mouseoverObjects = new Array();
+var codonBuffer = new Array();
+var mousePosition;
+var breakup = new Array();
+var posX, posY;
+var i = 0;
+var newObject;
+
+//Scaling factors
+var SCALE = {
+	H: 0.8,
+	W: 0.8,
+	T: 0.8
+};
+
+//Info display
+function displayInfo(object, clear) {
+	var x = mousePosition.x+20;
+	var y = mousePosition.y;
+
+	stageOverlay.beginPath();
+	stageOverlay.clearRect(x-115, y-115, 330, 275);
+
+	if (clear === false) {
+		stageOverlay.rect(x-15, y-15, 130, 75);
+		stageOverlay.globalAlpha = 0.7;
+		stageOverlay.fillStyle = "white";
+		stageOverlay.fill();
+		stageOverlay.lineWidth = 1;
+		stageOverlay.strokeStyle = "black";
+		stageOverlay.stroke();
+
+		stageOverlay.font = 'bold 10px Arial';
+		stageOverlay.fillStyle = 'black';
+		stageOverlay.textAlign = 'left';
+		stageOverlay.globalAlpha = 1;
+
+		if (object.type === "enzyme") {
+			stageOverlay.fillText("enzyme: " + object.name, x, y); y += 15;
+			stageOverlay.fillText("location: " + object.location.index + " - " + (object.location.index + 6), x, y); y += 15;
+			if (object.mutant) {
+				stageOverlay.fillText("mutant: " + object.mutant.letter + " > " + object.newBase, x, y); y += 15;
+			} else {stageOverlay.fillText("mutant: N/A", x, y); y += 15;}
+			stageOverlay.fillText("sequence: " + object.sequence, x, y); y += 15;
+		} else if (object.type === "note") {
+			stageOverlay.fillText(object.text, x, y); y += 15;
+			stageOverlay.fillText("location: " + object.start + " - " + object.end, x, y); y += 15;
+			stageOverlay.fillText(object.info, x, y); y += 15;
+		} else {
+			stageOverlay.fillText("base: " + object.letter, x, y); y += 15;
+			if (object.type === "codon") {
+				stageOverlay.fillText("location: " + object.index + " - " + (object.index + 2), x, y); y += 15;
+			} else {stageOverlay.fillText("location: " + object.index, x, y); y += 15;}
+			if (object.type === "base") {stageOverlay.fillText("note: " + object.note, x, y); y += 15;}
+		}
+	}
+
+	stageOverlay.closePath();
+}
+
+//Take an input string and create objects for drawing
+function parseSequence(str) {
+
+	//Figure out what objects will be displayed
+	var WINDOW_START = 0;
+	var WINDOW_END = Math.round((backgroundWidth / (DISPLAY_SIZE*SCALE.W))-2); //Get real end
+	WINDOW_END = Math.floor(WINDOW_END/3)*3; //Keep it as multiple of 3
+
+	//Reduce size of str
+	str = str.slice(WINDOW_START+WINDOW_LOCATION, WINDOW_END+WINDOW_LOCATION);
+
+	//Some test notes
+	var noteObject = [];
+
+	noteObject[0] = {
+		text: "ORF",
+		START: 3,
+		END: 80,
+		info: "Open reading frame 1",
+		color: "orange"
+	};
+
+	noteObject[1] = {
+		text: "eGFP",
+		START: 21,
+		END: 119,
+		info: "Green protein cDNA",
+		color: "green"
+	};
+
+	noteObject[2] = {
+		text: "START",
+		START: 0,
+		END: 12,
+		info: "Start of transcription",
+		color: "cyan"
+	};
+
+	//Calculate basepair changes to create RE-Sites (stored in candidateEnzyme)
+	calculate(str);
+
+	//Breakup string into array
+	breakup = str.split("");
+
+	//Zero positions and clear stage
+	posX = 0;
+	stageBackground.clearRect(0, 0, STAGE_BACKGROUND.width, STAGE_BACKGROUND.height);
+	stageForeground.clearRect(0, 0, STAGE_FOREGROUND.width, STAGE_FOREGROUND.height);
+	stageOverlay.clearRect(0, 0, STAGE_OVERLAY.width, STAGE_OVERLAY.height);
+
+	//Loop through array and load into object
+	while (i < breakup.length) {
+
+		//Set new X position
+		posX += DISPLAY_SIZE*SCALE.W;
+
+		posY = 50; //Reset Y position
+
+		//Create keyObject object from each array entry
+		keyObject = {
+			type: 'base',
+			letter: breakup[i],
+			index: (i+WINDOW_LOCATION),
+			X: posX,
+			Y: posY,
+			H: (DISPLAY_SIZE*SCALE.H),
+			W: (DISPLAY_SIZE*SCALE.W),
+			border: 1,
+			color: "white",
+			colorHighlight: "yellow",
+			note: []
+		};
+
+		//Deal with codon buffer
+		if (codonBuffer.length < 2) { //Add the new base to the codon buffer if length is < 2
+			codonBuffer.push(keyObject);
+		} else { //If length is 2 add third base then queue the codon and empty buffer
+			codonBuffer.push(keyObject);
+			var codonCurrent = codonBuffer[0].letter + codonBuffer[1].letter + codonBuffer[2].letter;
+			codonBuffer = [];
+		}
+
+		//Mark the bases that can be altered
+		var enzymeIndex = 0;
+		candidateEnzyme.forEach(function(object) {
+			if ((i+WINDOW_LOCATION) === object.location) {
+				newObject = {
+					type: "enzyme",
+					number: enzymeIndex,
+					X: keyObject.X+(keyObject.W*3)-1,
+					Y: keyObject.Y-(8*enzymeIndex*SCALE.T)-(10*SCALE.H)-1,
+					W: keyObject.W,
+					H: keyObject.H,
+					name: object.name,
+					color: "red",
+					colorHighlight: "black",
+					cutsite: object.cutsite,
+					mutant: object.mutant,
+					location: object.location,
+					sequence: object.sequence,
+					newBase: object.newBase
+				};
+
+				displayObjects.push(newObject);
+
+				enzymeIndex++;
+			}
+		});
+
+		var enzymeIndex = 0;
+		originalEnzyme.forEach(function(object) {
+			if ((i+WINDOW_LOCATION) === object.location) {
+				newObject = {
+					type: "enzyme",
+					number: enzymeIndex,
+					X: keyObject.X+(keyObject.W*3)-1,
+					Y: keyObject.Y-(8*enzymeIndex*SCALE.T)-(10*SCALE.H)-1,
+					W: keyObject.W,
+					H: keyObject.H,
+					name: object.name,
+					color: "blue",
+					colorHighlight: "black",
+					cutsite: object.cutsite,
+					mutant: false,
+					location: object.location,
+					sequence: object.sequence
+				};
+
+				displayObjects.push(newObject);
+
+				enzymeIndex++;
+			}
+		});
+
+		createComp(keyObject); displayObjects.push(newObject); //Setup complement base
+		createMRNA(keyObject); displayObjects.push(newObject); //Setup mRNA
+
+		if ((i % 3) === 2 && (i > 0)) {
+			createCodon(keyObject); //Setup Codon
+
+			//Get amino acid for codon
+			var calculatedCodon = getAASequence(codonCurrent);
+			newObject.letter = calculatedCodon;
+
+			//Search amino acids for match then return
+			aminoAcid.some(function(object) {
+				if (object.letter === calculatedCodon) {
+					newObject.color = "rgba(0, 0, 255, "+(object.hydrophobicity/500)+")";
+				}
+
+				return object.letter === newObject.letter;
+			});
+
+			if (calculatedCodon === "END") {
+				newObject.color = "rgba(255, 0, 0, 0.2)";
+			}
+
+			displayObjects.push(newObject);
+
+			createNumber(keyObject); displayObjects.push(newObject); //Draw all numbers but the first
+
+		} else if (i === 0) {
+
+			createNumber(keyObject); displayObjects.push(newObject); //Draw the first number
+
+			var noteIndex = 0; var noteY = 0;
+			posY += keyObject.H*1.6;
+
+			noteObject.forEach(function(object) {
+				noteY = 0;
+				for (var x = 0; x < noteIndex; x++) {
+					if (object.START > noteObject[x].START && object.START < noteObject[x].END //This isn't right fix this
+					|| object.END > noteObject[x].START && object.END < noteObject[x].END) {
+						noteY += keyObject.H*1.6;
+					}
+				} noteIndex++;
+
+				newObject = {
+					type: "note",
+					text: object.text,
+					start: object.START,
+					end: object.END,
+					info: object.info,
+					X: 0,
+					Y: posY + noteY,
+					H: keyObject.H,
+					W: 0,
+					border: 1,
+					color: object.color,
+					colorHighlight: "yellow"
+				};
+
+				if ((object.START-WINDOW_LOCATION) <= 0) {
+					newObject.X = keyObject.X;
+					if ((object.END-WINDOW_LOCATION) < WINDOW_END) {
+						newObject.W = keyObject.W*(object.END-WINDOW_LOCATION+1);
+					} else {newObject.W = keyObject.W*(WINDOW_END);}
+				} else {
+					newObject.X = keyObject.X*(object.START+1-WINDOW_LOCATION);
+					if ((object.END-WINDOW_LOCATION) < WINDOW_END) {
+						newObject.W = keyObject.W*(object.END-object.START-WINDOW_LOCATION+1);
+					} else {
+						newObject.W = keyObject.W*(WINDOW_END-(object.START-WINDOW_LOCATION));
+					}
+				}
+
+				if (WINDOW_LOCATION<object.END) {displayObjects.push(newObject);}
+			});
+		}
+
+		//Fix me!
+		noteObject.forEach(function(object) {
+			if (keyObject.index >= object.START && keyObject.index <= object.END) {
+				keyObject.color = object.color;
+				var note = object.text;
+				keyObject.note.push(note);
+			}
+		});
+
+		//Push the key object at last
+		displayObjects.push(keyObject);
+
+		//Step through i
+		i++;
+
+	}
+
+	//Insert mutant base to enzyme objects
+	displayObjects.forEach(function(object) {
+		if (object.type === "enzyme") {
+			var currentObject = object;
+			displayObjects.forEach(function(object) {
+				if (object.type === "base" && currentObject.mutant) {
+					if (object.index === currentObject.mutant) {
+						currentObject.mutant = object;
+					}
+				}
+				if (object.type === "base" && object.index === currentObject.location) {
+					currentObject.location = object;
+				}
+			});
+		}
+	});
+
+	//Draw all objects to the screen
+	displayObjects.forEach(function(object) {draw(object, "all");});
+
+}
+
+//Check for changes to the input textbox and then call onChange
+detectChange('#searchSequence');
+
+//Setup complement base
+function createComp(keyObject) {
+		posY += keyObject.H;
+		newObject = {
+			type: 'comp',
+			letter: getCompBase(breakup[i]),
+			index: keyObject.index,
+			X: keyObject.X,
+			Y: posY,
+			H: keyObject.H,
+			W: keyObject.W,
+			border: 1,
+			color: "white",
+			colorHighlight: "yellow"
+		};
+}
+
+//Setup mRNA
+function createMRNA(keyObject) {
+	posY += keyObject.H+(5*SCALE.H);
+	newObject = {
+		type: 'mrna',
+		letter: getRNA(breakup[i]),
+		index: keyObject.index,
+		X: keyObject.X,
+		Y: posY,
+		H: keyObject.H,
+		W: keyObject.W,
+		border: 1,
+		color: "rgba(0,100,0,0.1)",
+		colorHighlight: "yellow"
+	};
+}
+
+//Setup codon
+function createCodon(keyObject) {
+	posY += keyObject.H+(5*SCALE.H);
+	newObject = {
+		type: "codon",
+		letter: "",
+		index: keyObject.index-2,
+		X: keyObject.X-(keyObject.W*2),
+		Y: posY,
+		H: keyObject.H,
+		W: keyObject.W*3,
+		border: 1,
+		color: "white",
+		colorHighlight: "yellow"
+	};
+}
+
+//Create number objects
+function createNumber(keyObject) {
+	posY += keyObject.H*1.6;
+	newObject = {
+		type: "number",
+		number: keyObject.index,
+		X: keyObject.X,
+		Y: posY,
+		color: "black"
+	};
+}
+
+function onChange(element) {
+	//If ID changed matches textbox ID
+	if (element.attr('id') === $('#searchSequence').attr('id')) {
+		reloadAll();
+	}
+}
+
+//When the mouse moves get the new position
+STAGE_OVERLAY.addEventListener('mousemove', function(event) {
+	mousePosition = getCursorPos(STAGE_OVERLAY, event);
+
+	//Check if mouse is over a base on the screen if not over something else
+	if (mouseoverObjects.length != 0) {
+		//Check if mouse has left a mouse-over object
+		mouseoverObjects.forEach(function(object) {
+
+			if (object.type === "enzyme") {
+				if (mousePosition.x > (object.X-10-1) && mousePosition.x < (object.X+10+1) && mousePosition.y > object.Y && mousePosition.y < (object.Y+10+2)) {
+					displayInfo(object, false); //Create info display
+				} else {
+					draw(object.mutant, "base", false); //Reset mutant base color
+					draw(object, "cutsite", true); // Clear the cutsite
+					mouseoverObjects = []; // Empty mouseover objects FIX ME to remove just the mouseover object
+					displayInfo(object, true); //Remove info display
+				}
+
+				draw(object, "base", false, stageBackground); //Draw object to the screen
+			} else {
+				hoverObject(object, false); //Remove object from hover array
+			}
+		});
+	} else {
+		displayObjects.forEach(function(object) {
+			if (object.type === "enzyme") {
+				if (mousePosition.x > (object.X-10-1) && mousePosition.x < (object.X+10+1) && mousePosition.y > object.Y && mousePosition.y < (object.Y+10+2)) {
+					draw(object, "cutsite", false, stageForeground);
+
+					var tempColor = object.mutant.color;
+					object.mutant.color = "pink";
+					draw(object.mutant, "base", false, stageBackground);
+					object.mutant.color = tempColor;
+					mouseoverObjects.push(object);
+				}
+			} else {
+				hoverObject(object, true);
+			}
+		});
+	}
+
+}, false);
+
+function hoverObject(object, hover) {
+	if (mousePosition.x > object.X && mousePosition.x < (object.X + object.W) && mousePosition.y > object.Y && mousePosition.y < (object.Y + object.H)) {
+		if (hover === true) {
+			highlightObject(object);
+			draw(object, object.type, false);
+			mouseoverObjects.push(object);
+		}
+		displayInfo(object, false); //Create info display
+	} else {
+		if (hover === false) {
+			highlightObject(object);
+			draw(object, object.type, false);
+			mouseoverObjects = []; //Fix this to remove just the object you mouseout
+			displayInfo(object, true); //Remove info display
+		}
+	}
+}
+
+document.addEventListener('mousedown', function(event) {
+	mouseoverObjects[0].color = "green";
+	draw(mouseoverObjects[0], mouseoverObjects[0].type, false);
+}, false);
+
+//Listen for keypresses
+var keyPressed = [];
+document.addEventListener('keydown', function(e) {keyPressed[e.keyCode] = true; GetKeyPress(); reloadAll();}, false);
+document.addEventListener('keyup', function(e) {keyPressed[e.keyCode] = false;}, false);
+
+//Get Key Press
+function GetKeyPress() {
+	if (keyPressed[37]) {
+		if (WINDOW_LOCATION > 0) {WINDOW_LOCATION -= 3;}
+	} //Left arrow
+	if (keyPressed[39]) {WINDOW_LOCATION += 3;} //Right arrow
+	if (keyPressed[38]) {SCALE.H += 0.1; SCALE.W += 0.1; SCALE.T += 0.1;} //Up Arrow
+	if (keyPressed[40]) {SCALE.H -= 0.1; SCALE.W -= 0.1; SCALE.T -= 0.1;} //Down Arrow
+}
+
+function reloadAll() {
+	i = 0; displayObjects = []; codonBuffer = []; //Reset everything to zero
+	parseSequence($('#searchSequence').val());
+}
+
+//Display test sequence
+$('#searchSequence').val("ATGACTCGTGACGTAGACGTCTAGACTCGTATGGTCCCGATCTAGATGATGTAATATGGTGAGCAAGGGCGAGGAGCTGTTCACCGGGGTGGTGCCCATCCTGGTCGAGCTGGACGGCGACGTAAACGGCCACAAGTTCAGCGTGTCCGGCGAGGGCGAGGGCGATGCCACCTACGGCAAGCTGACCCTGAAGTTCATCTGCACCACCGGCAAGCTGCCCGTGCCCTGGCCCACCCTCGTGACCACCCTGACCTACGGCGTGCAGTGCTTCAGCCGCTACCCCGACCACATGAAGCAGCACGACTTCTTCAAGTCCGCCATGCCCGAAGGCTACGTCCAGGAGCGCACCATCTTCTTCAAGGACGACGGCAACTACAAGACCCGCGCCGAGGTGAAGTTCGAGGGCGACACCCTGGTGAACCGCATCGAGCTGAAGGGCATCGACTTCAAGGAGGACGGCAACATCCTGGGGCACAAGCTGGAGTACAACTACAACAGCCACAACGTCTATATCATGGCCGACAAGCAGAAGAACGGCATCAAGGTGAACTTCAAGATCCGCCACAACATCGAGGACGGCAGCGTGCAGCTCGCCGACCACTACCAGCAGAACACCCCCATCGGCGACGGCCCCGTGCTGCTGCCCGACAACCACTACCTGAGCACCCAGTCCGCCCTGAGCAAAGACCCCAACGAGAAGCGCGATCACATGGTCCTGCTGGAGTTCGTGACCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAG");
+
+onChange($('#searchSequence'));
+
+</script>
+</body>
+</html>

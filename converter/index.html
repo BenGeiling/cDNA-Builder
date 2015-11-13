@@ -1,0 +1,92 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+
+<!-- HEADER -->
+<head>
+	<!-- Set-up important tags + scripts -->
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<title>File Reader/Converter</title>
+	<meta name="robots" content="index" />
+	<meta name="author" content="Ben Geiling" />
+
+	<!-- Include JQuery -->
+	<script type="text/javascript" src="jquery-2.1.4.min.js"></script>
+
+	<!-- Include file line reader script -->
+	<script type="text/javascript" src="LineReader.js"></script>
+
+	<!-- Include file handler script -->
+	<script type="text/javascript" src="fileHandler.js"></script>
+</head>
+
+<!-- BODY -->
+<body>
+	<!-- Provide for basic UI -->
+	<div style="position: relative; display: block; float: left;">Convert CSV to JS-Object: </div>
+	<input type="file" id="file" style="border: 1px solid grey; position: relative; display: block; float: left;">
+	<button id="read" style="position: relative; display: block; float: left;" >Convert</button>
+	<a href="" id="output" style="position: relative; display: block; float: left;"></a>
+
+<!-- Start of Javascript stuff -->
+<script>
+	//Define global variables
+	var totalCount = 1;
+	var variables = new Array();
+
+	//When read button is clicked start reading the file
+	$('#read').click(function () {fileRead('#file');});
+
+	//This function is called by fileRead for each line of the file
+	function fileLine(line) {extractObjects(line);}
+
+	//Extract objects from the csv and convert to JS
+	function extractObjects(line) {
+		var newLine = line.replace(/ /g, ''); //Remove all whitespace
+		var content = newLine.split(","); //Split into array around commas
+
+		//The first line of the file
+		if (totalCount === 1) {
+			objectName = newLine; //Get the name of the object to be created
+			outputText = "var " + objectName + " = new Array();"; //Create array
+		} else if (totalCount === 2) { //The second line of the file
+			for (var x = 0; x < content.length; x++) {
+				var splitContent = content[x].split("/");
+
+				variables[x] = {
+					name: splitContent[0],
+					type: splitContent[1]
+				};
+			}
+		} else {
+			outputText += '\n' + objectName + "[" + (totalCount-3) + "] = {"; //Start
+
+			if (variables.length === 1) {
+				if (variables[variables.length-1].type === "$") {
+					outputText += variables[variables.length-1].name + ': "' + content[variables.length-1] + '"};'; //End
+				} else if (variables[variables.length-1].type === "#") {
+					outputText += variables[variables.length-1].name + ': ' + content[variables.length-1] + '};'; //End
+				}
+			} else if (variables.length > 1) {
+				//Step through the middle values
+				for (var x = 0; x < (variables.length - 1); x++) {
+					if (variables[x].type === "$") {
+						outputText += variables[x].name + ': "' + content[x] + '", '; //Middle
+					} else if (variables[x].type === "#") {
+						outputText += variables[x].name + ': ' + content[x] + ', '; //Middle
+					}
+				}
+
+				if (variables[x].type === "$") {
+					outputText += variables[variables.length-1].name + ': "' + content[variables.length-1] + '"};'; //End
+				} else if (variables[x].type === "#") {
+					outputText += variables[variables.length-1].name + ': ' + content[variables.length-1] + '};'; //End
+				}
+			} else {console.log("Error: No Variables");} //Give error message if no variables found
+
+		}
+
+		totalCount++;
+	}
+</script>
+</body>
+</html>
